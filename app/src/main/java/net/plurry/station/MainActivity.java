@@ -1,8 +1,11 @@
 package net.plurry.station;
 
 import android.app.ProgressDialog;
+import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.os.AsyncTask;
+import android.os.PowerManager;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
 import android.view.Menu;
@@ -72,8 +75,13 @@ public class MainActivity extends AppCompatActivity implements LifeCycleListener
     private boolean connected;
     private AudioRouter audioRouter;
 
+    private PowerManager.WakeLock fullWakeLock;
+    private PowerManager.WakeLock partialWakeLock;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        sendBroadcast(new Intent("net.plurry.station.packagereceiver"));
+        createWakeLocks();
         super.onCreate(savedInstanceState);
 
         initUi();
@@ -84,8 +92,9 @@ public class MainActivity extends AppCompatActivity implements LifeCycleListener
         setContentView(R.layout.activity_main);
         String session = getPreferences("session_id");
         String code = getPreferences("code");
+        String product_id = getPreferences("product_id");
 
-        if (session.isEmpty() || code.isEmpty()) {
+        if (session.isEmpty() || code.isEmpty() || product_id.isEmpty()) {
             new CodeTask().execute(
                     "http://plurry.cycorld.com:3000/owr/generate",
                     ""
@@ -98,11 +107,16 @@ public class MainActivity extends AppCompatActivity implements LifeCycleListener
         toggleAudioButton = (Button) findViewById(R.id.toggle_audio);
         toggleVideoButton = (Button) findViewById(R.id.toggle_video);
 
-        codeLayout.setVisibility(View.VISIBLE);
-        parentFragment.setVisibility(View.GONE);
+        hideVideo();
 
         mSmartPhoneCode.setText(code);
         joinRoom(session);
+        websocketServiceStart();
+    }
+
+    private void websocketServiceStart() {
+        Intent i = new Intent(this_activity, WebsocketService.class);
+        startService(i);
     }
 
     private void joinRoom(String session) {
@@ -198,10 +212,17 @@ public class MainActivity extends AppCompatActivity implements LifeCycleListener
         return config;
     }
 
+    protected void createWakeLocks() {
+        PowerManager powerManager = (PowerManager) getSystemService(Context.POWER_SERVICE);
+        fullWakeLock = powerManager.newWakeLock((PowerManager.SCREEN_BRIGHT_WAKE_LOCK | PowerManager.FULL_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP), "Loneworker - FULL WAKE LOCK");
+        partialWakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Loneworker - PARTIAL WAKE LOCK");
+    }
+
     @Override
     public void onStop() {
         //close the connection when the fragment is detached, so the streams are not open.
         super.onStop();
+        finish();
         if (skylinkConnection != null && connected) {
             skylinkConnection.disconnectFromRoom();
             skylinkConnection.setLifeCycleListener(null);
@@ -211,7 +232,6 @@ public class MainActivity extends AppCompatActivity implements LifeCycleListener
             audioRouter.stopAudioRouting(this_activity.getApplicationContext());
         }
     }
-
     /***
      * Lifecycle Listener Callbacks -- triggered during events that happen during the SDK's lifecycle
      */
@@ -301,7 +321,6 @@ public class MainActivity extends AppCompatActivity implements LifeCycleListener
                     parentFragment.addView(peer);
                 }
             }
-
         }
     }
 
@@ -340,8 +359,7 @@ public class MainActivity extends AppCompatActivity implements LifeCycleListener
 
     @Override
     public void onRemotePeerJoin(String remotePeerId, Object userData, boolean hasDataChannel) {
-        parentFragment.setVisibility(View.VISIBLE);
-        codeLayout.setVisibility(View.GONE);
+        showVideo();
 
         Toast.makeText(this_activity, "상대방과 연결되었습니다.", Toast.LENGTH_SHORT).show();
         UserInfo remotePeerUserInfo = skylinkConnection.getUserInfo(remotePeerId);
@@ -389,8 +407,7 @@ public class MainActivity extends AppCompatActivity implements LifeCycleListener
 
     @Override
     public void onRemotePeerLeave(String remotePeerId, String message) {
-        parentFragment.setVisibility(View.GONE);
-        codeLayout.setVisibility(View.VISIBLE);
+        hideVideo();
 
         Toast.makeText(this_activity, "상대방과의 연결이 끊어졌습니다.", Toast.LENGTH_SHORT).show();
         if (remotePeerId != null && remotePeerId.equals(this.peerId)) {
@@ -466,7 +483,6 @@ public class MainActivity extends AppCompatActivity implements LifeCycleListener
                 os.flush();
 
                 responseCode = conn.getResponseCode();
-                Log.d("responseCode", responseCode + "");
 
                 if (responseCode == HttpURLConnection.HTTP_OK) {
 
@@ -477,9 +493,6 @@ public class MainActivity extends AppCompatActivity implements LifeCycleListener
                     response = jsonConverter(response);
 
                     JSONObject responseJSON = new JSONObject(response);
-
-                    Log.i("response", "DATA response = " + responseJSON);
-                    Log.i("response", "DATA response = " + responseJSON.get("result"));
                 }
             } catch (MalformedURLException e) {
                 Log.d("MalformedURLException", "ERROR " + e.getMessage());
@@ -510,10 +523,14 @@ public class MainActivity extends AppCompatActivity implements LifeCycleListener
                         JSONObject product = (JSONObject) resultJSON.get("data");
                         String code = product.getString("code");
                         String session_id = product.getString("owr_session_id");
+                        String product_id = product.getString("product_id");
                         savePreferences("code", code);
                         savePreferences("session_id", session_id);
+                        savePreferences("product_id", product_id);
                         finish();
                         startActivity(getIntent());
+
+                        Log.d(TAG,product_id.toString());
                     }
                 } catch (JSONException e) {
                     Log.d("JSONException", "ERROR " + e.getMessage());
@@ -522,6 +539,15 @@ public class MainActivity extends AppCompatActivity implements LifeCycleListener
         }
     }
 
+    private void showVideo() {
+        parentFragment.setVisibility(View.VISIBLE);
+        codeLayout.setVisibility(View.GONE);
+    }
+
+    private void hideVideo() {
+        parentFragment.setVisibility(View.GONE);
+        codeLayout.setVisibility(View.VISIBLE);
+    }
 
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
