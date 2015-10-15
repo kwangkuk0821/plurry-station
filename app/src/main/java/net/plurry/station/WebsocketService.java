@@ -4,6 +4,7 @@ import android.app.ActivityManager;
 import android.app.KeyguardManager;
 import android.app.Notification;
 import android.app.Service;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -28,6 +29,9 @@ public class WebsocketService extends Service {
     private PowerManager.WakeLock fullWakeLock;
     private PowerManager.WakeLock partialWakeLock;
     KeyguardManager.KeyguardLock keyguardLock;
+    PowerManager powerManager;
+
+    private boolean keyguard = true;
 
     @Override
     public IBinder onBind(Intent intent) {
@@ -48,52 +52,70 @@ public class WebsocketService extends Service {
                 break;
             }
         }
-
         return isRunning;
     }
 
     protected void createWakeLocks() {
-        PowerManager powerManager = (PowerManager) getSystemService(Context.POWER_SERVICE);
+        powerManager = (PowerManager) getSystemService(Context.POWER_SERVICE);
         fullWakeLock = powerManager.newWakeLock((PowerManager.SCREEN_BRIGHT_WAKE_LOCK | PowerManager.FULL_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP), "Loneworker - FULL WAKE LOCK");
         partialWakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Loneworker - PARTIAL WAKE LOCK");
     }
 
     public void wakeDevice() {
-        fullWakeLock.acquire();
+        boolean isScreenOn = powerManager.isScreenOn();
+        if(!isScreenOn) {
+            fullWakeLock.acquire();
+        }
+    }
 
-        KeyguardManager keyguardManager = (KeyguardManager) getSystemService(Context.KEYGUARD_SERVICE);
-        keyguardLock = keyguardManager.newKeyguardLock("TAG");
-        keyguardLock.disableKeyguard();
+    public ComponentName getCurrentActivity() {
+        ActivityManager am = (ActivityManager) getApplicationContext().getSystemService(Context.ACTIVITY_SERVICE);
+        List<ActivityManager.RunningTaskInfo> taskInfo = am.getRunningTasks(1);
+
+        ComponentName topActivity = taskInfo.get(0).topActivity;
+
+        return topActivity;
     }
 
     @Override
     public void onCreate() {
+        sendBroadcast(new Intent("net.plurry.station.networkreceiver"));
         Log.e("WebsocketService", "onCreate");
         createWakeLocks();
+
         String product_id = getPreferences("product_id");
         client = new WebSocketClient(URI.create("ws://plurry.cycorld.com:3000/ws/debug/" + product_id), new WebSocketClient.Listener() {
             @Override
             public void onConnect() {
                 Log.d("Connect", "Connected!");
+                client.send("station on");
             }
 
             @Override
             public void onMessage(String message) {
-
-                Log.e("Message", String.format("Got string message! %s", message));
                 if (message.equals("remote on")) {
-                    wakeDevice();
-                    Log.e("Package", getPackageName());
-                    if (isRunningProcess(getApplicationContext(), getPackageName())) {
+                    boolean isScreenOn = powerManager.isScreenOn();
+                    if (isScreenOn) {
+                        if (!getCurrentActivity().getPackageName().equals("net.plurry.station")) {
+                            wakeDevice();
+                            Intent intent = new Intent();
+                            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                            intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                            intent.addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION);
+                            intent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                            intent.setClassName(getPackageName(), "net.plurry.station.MainActivity");
+                            startActivity(intent);
+                        }
+                    } else {
+                        wakeDevice();
                         Intent intent = new Intent();
                         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                        intent.addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION);
+                        intent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
                         intent.setClassName(getPackageName(), "net.plurry.station.MainActivity");
                         startActivity(intent);
-                    } else {
-                        Intent intent = getPackageManager().getLaunchIntentForPackage(getPackageName());
-                        startActivity(intent);
                     }
-                    fullWakeLock.release();
                 }
             }
 
@@ -129,6 +151,10 @@ public class WebsocketService extends Service {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         Log.e("WebsocketService", "onStartCommand");
+        KeyguardManager keyguardManager = (KeyguardManager) getSystemService(Context.KEYGUARD_SERVICE);
+        keyguardLock = keyguardManager.newKeyguardLock("TAG");
+        keyguardLock.disableKeyguard();
+        if (!client.isConnected()) client.connect();
         return START_STICKY;
     }
 

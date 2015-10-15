@@ -81,11 +81,23 @@ public class MainActivity extends AppCompatActivity implements LifeCycleListener
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         sendBroadcast(new Intent("net.plurry.station.packagereceiver"));
+        websocketServiceStart();
         createWakeLocks();
         super.onCreate(savedInstanceState);
-
         initUi();
         setListeners();
+    }
+
+    @Override
+    protected void onPause() {
+        Log.e("error", "onPause");
+        super.onPause();
+        PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+        fullWakeLock = pm.newWakeLock((PowerManager.SCREEN_BRIGHT_WAKE_LOCK | PowerManager.FULL_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP), "Loneworker - FULL WAKE LOCK");
+        if(!pm.isScreenOn()) {
+            finish();
+            System.exit(0);
+        }
     }
 
     private void initUi() {
@@ -111,7 +123,6 @@ public class MainActivity extends AppCompatActivity implements LifeCycleListener
 
         mSmartPhoneCode.setText(code);
         joinRoom(session);
-        websocketServiceStart();
     }
 
     private void websocketServiceStart() {
@@ -222,7 +233,6 @@ public class MainActivity extends AppCompatActivity implements LifeCycleListener
     public void onStop() {
         //close the connection when the fragment is detached, so the streams are not open.
         super.onStop();
-        finish();
         if (skylinkConnection != null && connected) {
             skylinkConnection.disconnectFromRoom();
             skylinkConnection.setLifeCycleListener(null);
@@ -408,6 +418,8 @@ public class MainActivity extends AppCompatActivity implements LifeCycleListener
     @Override
     public void onRemotePeerLeave(String remotePeerId, String message) {
         hideVideo();
+        finish();
+        System.exit(0);
 
         Toast.makeText(this_activity, "상대방과의 연결이 끊어졌습니다.", Toast.LENGTH_SHORT).show();
         if (remotePeerId != null && remotePeerId.equals(this.peerId)) {
